@@ -1,0 +1,5 @@
+#!/usr/bin/python3
+
+
+def build(ctx):
+    ctx(rule = 'blender -b -P ../models/interior/export_vc.py ${SRC}',source = 'cockpit/il86vc.blend',target = '../../il-86/il86vc.gltf ../../il-86/il86vc.bin')

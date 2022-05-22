@@ -1,0 +1,5 @@
+#!/usr/bin/python3
+
+def build(ctx):
+    ctx.recurse('interior')
+    ctx.recurse('exterior')
