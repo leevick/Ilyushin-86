@@ -1,0 +1,15 @@
+{
+  "dependencies": [],
+  "content_type": "AIRCRAFT",
+  "title": "Il-86",
+  "manufacturer": "Ilyushin",
+  "creator": "Victor Li",
+  "package_version": "1.0.0",
+  "minimum_game_version": "1.17.10",
+  "release_notes": {
+    "neutral": {
+      "LastUpdate": "",
+      "OlderHistory": ""
+    }
+  }
+}

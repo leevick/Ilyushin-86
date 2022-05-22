@@ -3,3 +3,4 @@
 def build(ctx):
     ctx.recurse('interior')
     ctx.recurse('exterior')
+    ctx(rule = 'cp ${SRC} ./il-86/SimObjects/Airplanes/Ilyushin-86/model/model.cfg',source = 'model.cfg')
