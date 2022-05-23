@@ -1,0 +1,2 @@
+def build(ctx):
+    ctx(rule='${CP} ${SRC} ${TGT}', source='panel.cfg', target='../il-86/SimObjects/Airplanes/Ilyushin-86/panel/panel.cfg')

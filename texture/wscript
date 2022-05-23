@@ -1,0 +1,3 @@
+def build(ctx):
+    ctx(rule='${CP} ${SRC} ${TGT}', source='thumbnail.jpg',
+        target='../il-86/SimObjects/Airplanes/Ilyushin-86/texture/thumbnail.jpg')

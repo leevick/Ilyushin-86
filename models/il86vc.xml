@@ -1,0 +1,9 @@
+<ModelInfo>
+    <LODS>
+        <LOD minSize="50" ModelFile="il86vc.gltf"/>
+        <LOD minSize="20" ModelFile="il86vc.gltf"/>
+        <LOD minSize="10" ModelFile="il86vc.gltf"/>
+        <LOD minSize="5" ModelFile="il86vc.gltf"/>
+        <LOD minSize="1" ModelFile="il86vc.gltf"/>
+    </LODS>
+</ModelInfo>

@@ -29,5 +29,5 @@ while l != layout["content"][0]["size"]:
     l = len(json.dumps(layout, indent=4, sort_keys=False))
 
 
-with open('il-86/layout.json', 'w') as f:
+with open('il-86/layout.json', 'w+') as f:
     f.write(json.dumps(layout, indent=4, sort_keys=False))

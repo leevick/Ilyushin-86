@@ -1,0 +1,18 @@
+
+def build(ctx):
+    ctx(rule='${CP} ${SRC} ${TGT}', source='aircraft.cfg',
+        target='../il-86/SimObjects/Airplanes/Ilyushin-86/aircraft.cfg')
+    ctx(rule='${CP} ${SRC} ${TGT}', source='ai.cfg',
+        target='../il-86/SimObjects/Airplanes/Ilyushin-86/ai.cfg')
+    ctx(rule='${CP} ${SRC} ${TGT}', source='cameras.cfg',
+        target='../il-86/SimObjects/Airplanes/Ilyushin-86/cameras.cfg')
+    ctx(rule='${CP} ${SRC} ${TGT}', source='cockpit.cfg',
+        target='../il-86/SimObjects/Airplanes/Ilyushin-86/cockpit.cfg')
+    ctx(rule='${CP} ${SRC} ${TGT}', source='engines.cfg',
+        target='../il-86/SimObjects/Airplanes/Ilyushin-86/engines.cfg')
+    ctx(rule='${CP} ${SRC} ${TGT}', source='flight_model.cfg',
+        target='../il-86/SimObjects/Airplanes/Ilyushin-86/flight_model.cfg')
+    ctx(rule='${CP} ${SRC} ${TGT}', source='gameplay.cfg',
+        target='../il-86/SimObjects/Airplanes/Ilyushin-86/gameplay.cfg')
+    ctx(rule='${CP} ${SRC} ${TGT}', source='systems.cfg',
+        target='../il-86/SimObjects/Airplanes/Ilyushin-86/systems.cfg')

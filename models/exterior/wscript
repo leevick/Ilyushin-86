@@ -2,3 +2,4 @@
 
 def build(ctx):
     print("build")
+    ctx(rule = 'blender -b -P ../models/exterior/export_ext.py ${SRC}',source = 'il86.blend',target = '../../il-86/SimObjects/Airplanes/Ilyushin-86/model/il86.gltf ../../il-86/SimObjects/Airplanes/Ilyushin-86/model/il86.bin')
