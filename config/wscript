@@ -16,3 +16,5 @@ def build(ctx):
         target='../il-86/SimObjects/Airplanes/Ilyushin-86/gameplay.cfg')
     ctx(rule='${CP} ${SRC} ${TGT}', source='systems.cfg',
         target='../il-86/SimObjects/Airplanes/Ilyushin-86/systems.cfg')
+    ctx(rule='${CP} ${SRC} ${TGT}', source='il86_050107.air',
+        target='../il-86/SimObjects/Airplanes/Ilyushin-86/il86_050107.air')
