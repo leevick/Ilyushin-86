@@ -2,3 +2,4 @@ build
 *.blend1
 waf3-2.0.23*
 .lock-waf_*_build
+.waf3*
