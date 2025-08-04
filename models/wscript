@@ -13,7 +13,7 @@ def build(ctx):
         source='IL-86.bin')
     ctx(rule='cp ${SRC} ./il-86/SimObjects/Airplanes/Ilyushin-86/model/IL-86.gltf',
         source='IL-86.gltf')
-    ctx(rule='cp ${SRC} ./il-86/SimObjects/Airplanes/Ilyushin-86/model/IL-86.MDL',
-        source='IL-86.MDL')
+    ctx(rule='cp ${SRC} ./il-86/SimObjects/Airplanes/Ilyushin-86/model/Il-86.MDL',
+        source='Il-86.MDL')
     ctx(rule='cp ${SRC} ./il-86/SimObjects/Airplanes/Ilyushin-86/model/il86vc.xml',
         source='il86vc.xml')
