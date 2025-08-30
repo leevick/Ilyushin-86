@@ -1,0 +1,259 @@
+#!python3
+
+import os
+import subprocess
+import cv2
+import lensfunpy
+import numpy as np
+from waflib.Build import BuildContext
+from waflib.Configure import ConfigurationContext
+
+#!python3
+
+
+def configure(ctx):
+    """Configure phase - discover photo files"""
+    print("Discovering photo files...")
+    
+    # Find all JPG files in the photos directory
+    photo_files = ctx.path.ant_glob('*.JPG') + ctx.path.ant_glob('*.jpg')
+    photo_list = []
+    
+    for photo_file in photo_files:
+        # Skip already corrected files
+        if not photo_file.name.startswith('corrected_'):
+            photo_list.append(photo_file.name)
+            print(f"Found photo: {photo_file.name}")
+    
+    # Store the photo list for the build phase
+    ctx.env.PHOTO_LIST = sorted(photo_list)
+    print(f"Configured {len(photo_list)} photos for lens correction")
+
+
+def extract_exif_data(photo_path):
+    """
+    Extract EXIF data from a photo using exiftool command line output.
+
+    Args:
+        photo_path (str): Path to the photo
+
+    Returns:
+        dict: EXIF data as a dictionary
+    """
+    try:
+        # Run exiftool to extract text metadata
+        result = subprocess.run([
+            'exiftool', '-s', '-G', photo_path
+        ], capture_output=True, text=True, check=True)
+
+        # Parse text output into dictionary
+        exif_data = {}
+        for line in result.stdout.strip().split('\n'):
+            if ':' in line:
+                # Split on first colon to handle values with colons
+                key_part, value = line.split(':', 1)
+                key_part = key_part.strip()
+                value = value.strip()
+
+                # Remove group prefix [Group] if present
+                if ']' in key_part:
+                    key = key_part.split(']', 1)[1].strip()
+                else:
+                    key = key_part
+
+                exif_data[key] = value
+
+        return exif_data
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Failed to extract EXIF data with exiftool: {e}")
+    except FileNotFoundError:
+        raise RuntimeError(
+            "exiftool not found. Please install exiftool (perl-image-exiftool)")
+
+
+def correct_lens_distortion(photo_path, output_path=None):
+    """
+    Apply lens correction to a photo using EXIF data and lensfunpy database.
+    Uses OpenCV for image processing and lens correction.
+
+    For consistent correction behavior, portrait images are temporarily rotated 
+    to landscape orientation during correction, then rotated back to their 
+    original orientation.
+
+    Args:
+        photo_path (str): Path to the input photo
+        output_path (str): Path for the corrected photo (optional)
+
+    Returns:
+        str: Path to the corrected image
+    """
+    # Extract EXIF data using exiftool
+    exif_data = extract_exif_data(photo_path)
+
+    # Extract camera and lens info from EXIF
+    camera_make = exif_data.get('Make', '')
+    camera_model = exif_data.get('Model', '')
+
+    # Try multiple possible lens model fields
+    lens_model = exif_data.get('LensID', '')
+
+    # Get focal length - handle various formats
+    focal_length = 0
+    focal_length_str = (exif_data.get('FocalLength', '') or
+                        exif_data.get('FocalLengthIn35mmFormat', ''))
+
+    if focal_length_str:
+        # Handle formats like "50.0 mm", "50 mm", "50.0"
+        import re
+        focal_match = re.search(r'(\d+\.?\d*)', focal_length_str)
+        if focal_match:
+            focal_length = float(focal_match.group(1))
+
+    # Get aperture for better correction
+    aperture = 2.8  # default
+    aperture_str = exif_data.get(
+        'FNumber', '') or exif_data.get('Aperture', '')
+
+    if aperture_str:
+        # Handle formats like "2.8", "f/2.8", "2.8/1"
+        import re
+        aperture_match = re.search(r'(\d+\.?\d*)', aperture_str)
+        if aperture_match:
+            aperture = float(aperture_match.group(1))
+
+    print(f"Camera: {camera_make} {camera_model}")
+    print(f"Lens: {lens_model}")
+    print(f"Focal Length: {focal_length}mm")
+    print(f"Aperture: f/{aperture}")
+
+    # Load image using OpenCV
+    img = cv2.imread(photo_path)
+    if img is None:
+        raise ValueError(f"Could not load image: {photo_path}")
+
+    height, width = img.shape[0], img.shape[1]
+
+    # Determine orientation based on dimensions
+    if width > height:
+        orientation = "landscape"
+        needs_rotation = False
+    elif height > width:
+        orientation = "portrait"
+        needs_rotation = True
+    else:
+        orientation = "square"
+        needs_rotation = False
+
+    print(f"Original image dimensions: {width}x{height} ({orientation})")
+
+    # Transform portrait to landscape for consistent correction
+    if needs_rotation:
+        img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+        # Update dimensions after rotation
+        height, width = img.shape[0], img.shape[1]
+        print(f"Rotated to landscape for correction: {width}x{height}")
+
+    # Store original orientation for later restoration
+    original_orientation = orientation
+
+    # Initialize lensfunpy database
+    db = lensfunpy.Database()
+
+    # Find camera in database
+    cameras = db.find_cameras(camera_make, camera_model)
+    if not cameras:
+        raise ValueError(
+            f"Camera {camera_make} {camera_model} not found in database")
+
+    camera = cameras[0]
+
+    # Find lens in database
+    lenses = db.find_lenses(camera, None)
+
+    # First filter: keep only lenses with matching numeric characters
+    filtered_lenses = []
+    model_numeric = ''.join(filter(str.isdigit, lens_model))
+
+    for lens in lenses:
+        lens_numeric = ''.join(filter(str.isdigit, lens.model))
+        if lens_numeric == model_numeric:
+            filtered_lenses.append(lens)
+
+    # If we have multiple matches, find the best string match
+    if len(filtered_lenses) > 1:
+        best_lens = None
+        best_score = -1
+
+        for lens in filtered_lenses:
+            # Calculate similarity score (number of common characters)
+            score = sum(1 for a, b in zip(
+                lens.model.lower(), lens_model.lower()) if a == b)
+            if score > best_score:
+                best_score = score
+                best_lens = lens
+
+        lenses = [best_lens] if best_lens else filtered_lenses
+    else:
+        lenses = filtered_lenses
+
+    if not lenses:
+        # Try searching without camera constraint
+        lenses = db.find_lenses(None, lens_model)
+        if not lenses:
+            raise ValueError(f"Lens {lens_model} not found in database")
+
+    lens = lenses[0]
+
+    # Create modifier for lens correction
+    distance = 1  # default focus distance in meters
+    mod = lensfunpy.Modifier(lens, camera.crop_factor, width, height)
+    mod.initialize(focal_length, aperture, distance)
+
+    # Apply corrections using OpenCV
+    undist_coords = mod.apply_geometry_distortion()
+    img_undistorted = cv2.remap(img, undist_coords, None, cv2.INTER_LANCZOS4)
+
+    # Rotate back to original orientation if needed
+    if needs_rotation and original_orientation == "portrait":
+        img_undistorted = cv2.rotate(
+            img_undistorted, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        print("Rotated back to original portrait orientation")
+
+    # Save corrected image
+    if output_path is None:
+        name, ext = os.path.splitext(photo_path)
+        output_path = f"{name}_corrected{ext}"
+
+    cv2.imwrite(output_path, img_undistorted)
+
+
+def build(ctx: BuildContext):
+    """Build phase - process all discovered photos"""
+    photo_list = getattr(ctx.env, 'PHOTO_LIST', [])
+    
+    if not photo_list:
+        print("No photos found. Run 'waf configure' first.")
+        return
+    
+    print(f'Building lens correction for {len(photo_list)} photos')
+    
+    for (i, photo_name) in enumerate(photo_list):
+        print(f"Processing {i+1}/{len(photo_list)}: {photo_name}")
+        
+        photo = ctx.path.find_resource(photo_name)
+        if not photo:
+            print(f"Warning: Photo {photo_name} not found, skipping")
+            continue
+            
+        corrected = ctx.path.find_or_declare(f'corrected_{photo_name}')
+        
+        ctx(rule=lambda task: correct_lens_distortion(
+                task.inputs[0].abspath(), 
+                task.outputs[0].abspath()
+            ),
+            source=photo, 
+            target=corrected,
+            name=f'correct_{photo_name}')
+    
+    ctx.add_group()
+    pass

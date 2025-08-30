@@ -1,2 +1,258 @@
+#!python3
+
+from waflib.Build import BuildContext
+from waflib.Configure import ConfigurationContext
+import cv2
+import numpy as np
+import os
+import math
+import xml.etree.ElementTree as ET
+
+
+def configure(ctx):
+    """Configure phase - discover input files and store configuration"""
+    print("Discovering panel configurations...")
+    
+    # Find all SVG files in the panel directory
+    svg_files = ctx.path.ant_glob('*.svg')
+    panel_configs = []
+    
+    for svg_file in svg_files:
+        try:
+            print(f"Parsing SVG file: {svg_file.name}")
+            # Parse each SVG to find polygons with panel IDs
+            tree = ET.parse(svg_file.abspath())
+            root = tree.getroot()
+            
+            # Find all polygons with IDs starting with "panel_"
+            # Define namespace for SVG
+            namespaces = {'svg': 'http://www.w3.org/2000/svg'}
+            
+            # Try with SVG namespace first
+            polygons = root.findall(".//svg:polygon[@id]", namespaces)
+            if not polygons:
+                # Fallback to no namespace
+                polygons = root.findall(".//polygon[@id]")
+            print(f"Found {len(polygons)} polygons in {svg_file.name}")
+            
+            for polygon in polygons:
+                polygon_id = polygon.get('id')
+                if polygon_id and polygon_id.startswith('panel_'):
+                    # Extract the photo reference from the SVG image element
+                    image_elem = root.find(".//{http://www.w3.org/2000/svg}image[@href]")
+                    print(f"Image element found for polygon {polygon_id}")
+                    photo_href = image_elem.get('href')
+                    panel_configs.append({
+                        'svg_file': svg_file.name,
+                        'polygon_id': polygon_id,
+                        'photo_path': photo_href,
+                        'svg_path': svg_file.abspath()
+                    })
+                    print(f"Found panel: {polygon_id} in {svg_file.name} -> {photo_href}")
+        
+        except Exception as e:
+            print(f"Warning: Could not parse {svg_file.name}: {e}")
+    
+    # Store the configuration for the build phase
+    ctx.env.PANEL_CONFIGS = panel_configs
+    print(f"Configured {len(panel_configs)} panels for processing")
+
+
+def extract_polygon_points(svg_file_path, polygon_id):
+    """
+    Extract polygon points from an SVG file.
+    
+    Args:
+        svg_file_path (str): Path to the SVG file
+        polygon_id (str): ID of the polygon to extract points from
+    
+    Returns:
+        list: List of (x, y) tuples representing the polygon corners
+    """
+    try:
+        tree = ET.parse(svg_file_path)
+        root = tree.getroot()
+        
+        # Handle SVG namespace
+        namespace = {'svg': 'http://www.w3.org/2000/svg'}
+        
+        # Find the polygon with the specified ID
+        polygon = root.find(f".//svg:polygon[@id='{polygon_id}']", namespace)
+        if polygon is None:
+            # Try without namespace
+            polygon = root.find(f".//polygon[@id='{polygon_id}']")
+        
+        if polygon is None:
+            raise ValueError(f"Polygon with id '{polygon_id}' not found in SVG")
+        
+        # Extract points attribute
+        points_str = polygon.get('points')
+        if not points_str:
+            raise ValueError(f"No points attribute found for polygon '{polygon_id}'")
+        
+        # Parse points string like "-11,914 2012,929 1940,1792 55,1748"
+        points = []
+        point_pairs = points_str.strip().split()
+        
+        for pair in point_pairs:
+            if ',' in pair:
+                x, y = pair.split(',')
+                points.append((float(x), float(y)))
+        
+        print(f"Extracted {len(points)} points from polygon '{polygon_id}': {points}")
+        return points
+        
+    except ET.ParseError as e:
+        raise ValueError(f"Failed to parse SVG file: {e}")
+    except Exception as e:
+        raise ValueError(f"Error extracting polygon points: {e}")
+
+
+def rectify_rectangle(input_image_path, corners, output_image_path=None):
+    """
+    Rectify and crop an image to a rectangle using 4 corner coordinates.
+
+    Args:
+        input_image_path (str): Path to the input image
+        corners (list): List of 4 tuples [(x1,y1), (x2,y2), (x3,y3), (x4,y4)]
+                       in order: left-top, right-top, right-bottom, left-bottom
+        output_image_path (str, optional): Output path. If None, defaults to wrapped_{original_filename}
+
+    Returns:
+        str: Path to the output image
+    """
+    # Load the image
+    img = cv2.imread(input_image_path)
+    if img is None:
+        raise ValueError(f"Could not load image: {input_image_path}")
+
+    # Generate output path if not provided
+    if output_image_path is None:
+        base_name = os.path.basename(input_image_path)
+        name, ext = os.path.splitext(base_name)
+        dir_name = os.path.dirname(input_image_path)
+        output_image_path = os.path.join(dir_name, f"wrapped_{name}{ext}")
+
+    # Calculate the optimal aspect ratio for the rectangle
+    def distance(p1, p2):
+        return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
+
+    lt, rt, rb, lb = corners
+
+    # Calculate average width and height
+    top_width = distance(lt, rt)
+    bottom_width = distance(lb, rb)
+    left_height = distance(lt, lb)
+    right_height = distance(rt, rb)
+
+    avg_width = (top_width + bottom_width) / 2
+    avg_height = (left_height + right_height) / 2
+
+    # Use the larger dimension as reference for better quality
+    if avg_width > avg_height:
+        target_width = int(avg_width)
+        target_height = int(avg_height)
+    else:
+        target_width = int(avg_width)
+        target_height = int(avg_height)
+
+    # Ensure minimum size
+    min_size = 100
+    if target_width < min_size:
+        scale = min_size / target_width
+        target_width = int(target_width * scale)
+        target_height = int(target_height * scale)
+
+    print(f"Input image: {input_image_path}")
+    print(f"Corners: {corners}")
+    print(f"Target dimensions: {target_width}x{target_height}")
+
+    # Define source and destination points
+    src_points = np.array(corners, dtype=np.float32)
+    dst_points = np.array([
+        [0, 0],                           # left-top
+        [target_width, 0],                # right-top
+        [target_width, target_height],    # right-bottom
+        [0, target_height]                # left-bottom
+    ], dtype=np.float32)
+
+    # Calculate perspective transformation matrix
+    matrix = cv2.getPerspectiveTransform(src_points, dst_points)
+
+    # Apply perspective transformation
+    rectified = cv2.warpPerspective(img, matrix, (target_width, target_height))
+
+    # Save the result
+    success = cv2.imwrite(output_image_path, rectified)
+    if not success:
+        raise RuntimeError(f"Failed to save image to: {output_image_path}")
+
+    print(f"Rectified image saved to: {output_image_path}")
+
+
+# panels = ["panel_16_11"]
+
+
 def build(ctx):
-    ctx(rule='${CP} ${SRC} ${TGT}', source='panel.cfg', target='../il-86/SimObjects/Airplanes/Ilyushin-86/panel/panel.cfg')
+    """Build phase - process all discovered panels"""
+    panel_configs = getattr(ctx.env, 'PANEL_CONFIGS', [])
+    
+    if not panel_configs:
+        print("No panel configurations found. Run 'waf configure' first.")
+        return
+    
+    for config in panel_configs:
+        svg_file_name = config['svg_file']
+        polygon_id = config['polygon_id']
+        photo_path = config['photo_path']
+        svg_path = config['svg_path']
+        
+        print(f"Processing panel {polygon_id} from {svg_file_name}")
+        
+        try:
+            # Extract polygon coordinates from SVG
+            corners = extract_polygon_points(svg_path, polygon_id)
+            
+            if len(corners) != 4:
+                print(f"Error: Expected 4 corners for {polygon_id}, got {len(corners)}")
+                continue
+            
+            # Find the source photo (handle relative paths from SVG)
+            if photo_path.startswith('../'):
+                # Relative path from SVG location
+                source_photo_path = os.path.normpath(os.path.join(
+                    os.path.dirname(svg_path), photo_path
+                ))
+                source_photo = ctx.root.find_resource(source_photo_path)
+            else:
+                # Try to find in build directory
+                source_photo = ctx.path.find_resource(photo_path)
+            
+            if not source_photo:
+                print(f"Warning: Source photo not found: {photo_path}")
+                continue
+            
+            # Create output file name based on polygon ID
+            output_name = f"rectified_{polygon_id}.JPG"
+            rectified_panel = ctx.path.find_or_declare(output_name)
+            
+            # Get SVG file resource for dependency tracking
+            svg_resource = ctx.path.find_resource(svg_file_name)
+            
+            # Create WAF task
+            ctx(rule=lambda task, corners=corners: rectify_rectangle(
+                task.inputs[0].abspath(),
+                corners,
+                task.outputs[0].abspath()
+            ),
+                source=[source_photo, svg_resource],
+                target=rectified_panel,
+                name=f'rectify_{polygon_id}')
+                
+            print(f"Created task for {polygon_id}: {source_photo.name} -> {output_name}")
+            
+        except Exception as e:
+            print(f"Error processing {polygon_id}: {e}")
+
+    # ctx(rule='${CP} ${SRC} ${TGT}', source='panel.cfg', target='../il-86/SimObjects/Airplanes/Ilyushin-86/panel/panel.cfg')
+    pass
