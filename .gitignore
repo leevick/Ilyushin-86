@@ -5,3 +5,6 @@ waf3-2.0.23*
 .waf3*
 .venv
 build
+*.jpg
+*.JPG
+.vscode
