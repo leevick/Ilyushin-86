@@ -12,34 +12,35 @@ import xml.etree.ElementTree as ET
 def configure(ctx):
     """Configure phase - discover input files and store configuration"""
     print("Discovering panel configurations...")
-    
+
     # Find all SVG files in the panel directory
     svg_files = ctx.path.ant_glob('*.svg')
     panel_configs = []
-    
+
     for svg_file in svg_files:
         try:
             print(f"Parsing SVG file: {svg_file.name}")
             # Parse each SVG to find polygons with panel IDs
             tree = ET.parse(svg_file.abspath())
             root = tree.getroot()
-            
+
             # Find all polygons with IDs starting with "panel_"
             # Define namespace for SVG
             namespaces = {'svg': 'http://www.w3.org/2000/svg'}
-            
+
             # Try with SVG namespace first
             polygons = root.findall(".//svg:polygon[@id]", namespaces)
             if not polygons:
                 # Fallback to no namespace
                 polygons = root.findall(".//polygon[@id]")
             print(f"Found {len(polygons)} polygons in {svg_file.name}")
-            
+
             for polygon in polygons:
                 polygon_id = polygon.get('id')
                 if polygon_id and polygon_id.startswith('panel_'):
                     # Extract the photo reference from the SVG image element
-                    image_elem = root.find(".//{http://www.w3.org/2000/svg}image[@href]")
+                    image_elem = root.find(
+                        ".//{http://www.w3.org/2000/svg}image[@href]")
                     print(f"Image element found for polygon {polygon_id}")
                     photo_href = image_elem.get('href')
                     panel_configs.append({
@@ -48,11 +49,12 @@ def configure(ctx):
                         'photo_path': photo_href,
                         'svg_path': svg_file.abspath()
                     })
-                    print(f"Found panel: {polygon_id} in {svg_file.name} -> {photo_href}")
-        
+                    print(
+                        f"Found panel: {polygon_id} in {svg_file.name} -> {photo_href}")
+
         except Exception as e:
             print(f"Warning: Could not parse {svg_file.name}: {e}")
-    
+
     # Store the configuration for the build phase
     ctx.env.PANEL_CONFIGS = panel_configs
     print(f"Configured {len(panel_configs)} panels for processing")
@@ -61,47 +63,50 @@ def configure(ctx):
 def extract_polygon_points(svg_file_path, polygon_id):
     """
     Extract polygon points from an SVG file.
-    
+
     Args:
         svg_file_path (str): Path to the SVG file
         polygon_id (str): ID of the polygon to extract points from
-    
+
     Returns:
         list: List of (x, y) tuples representing the polygon corners
     """
     try:
         tree = ET.parse(svg_file_path)
         root = tree.getroot()
-        
+
         # Handle SVG namespace
         namespace = {'svg': 'http://www.w3.org/2000/svg'}
-        
+
         # Find the polygon with the specified ID
         polygon = root.find(f".//svg:polygon[@id='{polygon_id}']", namespace)
         if polygon is None:
             # Try without namespace
             polygon = root.find(f".//polygon[@id='{polygon_id}']")
-        
+
         if polygon is None:
-            raise ValueError(f"Polygon with id '{polygon_id}' not found in SVG")
-        
+            raise ValueError(
+                f"Polygon with id '{polygon_id}' not found in SVG")
+
         # Extract points attribute
         points_str = polygon.get('points')
         if not points_str:
-            raise ValueError(f"No points attribute found for polygon '{polygon_id}'")
-        
+            raise ValueError(
+                f"No points attribute found for polygon '{polygon_id}'")
+
         # Parse points string like "-11,914 2012,929 1940,1792 55,1748"
         points = []
         point_pairs = points_str.strip().split()
-        
+
         for pair in point_pairs:
             if ',' in pair:
                 x, y = pair.split(',')
                 points.append((float(x), float(y)))
-        
-        print(f"Extracted {len(points)} points from polygon '{polygon_id}': {points}")
+
+        print(
+            f"Extracted {len(points)} points from polygon '{polygon_id}': {points}")
         return points
-        
+
     except ET.ParseError as e:
         raise ValueError(f"Failed to parse SVG file: {e}")
     except Exception as e:
@@ -112,6 +117,7 @@ def rectify_rectangle_with_outskirts(input_image_path, corners, output_image_pat
     """
     Rectify and crop an image to a rectangle using 4 corner coordinates.
     Preserves outskirt areas with transparency and outputs as PNG.
+    Output contains precisely the original image pixel range.
 
     Args:
         input_image_path (str): Path to the input image
@@ -133,6 +139,9 @@ def rectify_rectangle_with_outskirts(input_image_path, corners, output_image_pat
         name, ext = os.path.splitext(base_name)
         dir_name = os.path.dirname(input_image_path)
         output_image_path = os.path.join(dir_name, f"wrapped_{name}.png")
+
+    # Get original image dimensions
+    orig_height, orig_width = img.shape[:2]
 
     # Calculate the optimal aspect ratio for the rectangle
     def distance(p1, p2):
@@ -160,41 +169,82 @@ def rectify_rectangle_with_outskirts(input_image_path, corners, output_image_pat
         target_width = int(target_width * scale)
         target_height = int(target_height * scale)
 
-    # Add padding to preserve outskirts (25% padding on each side)
-    padding_factor = 0.25
-    padded_width = int(target_width * (1 + 2 * padding_factor))
-    padded_height = int(target_height * (1 + 2 * padding_factor))
-    
-    # Offset for centering the main rectangle
-    offset_x = int(target_width * padding_factor)
-    offset_y = int(target_height * padding_factor)
-
     print(f"Input image: {input_image_path}")
+    print(f"Original dimensions: {orig_width}x{orig_height}")
     print(f"Corners: {corners}")
-    print(f"Target dimensions: {target_width}x{target_height}")
-    print(f"Padded dimensions: {padded_width}x{padded_height}")
+    print(f"Target rectangle dimensions: {target_width}x{target_height}")
 
-    # Define source and destination points with padding
+    # Calculate transformation matrix for the rectangle
     src_points = np.array(corners, dtype=np.float32)
     dst_points = np.array([
-        [offset_x, offset_y],                           # left-top
-        [offset_x + target_width, offset_y],            # right-top
-        [offset_x + target_width, offset_y + target_height],  # right-bottom
-        [offset_x, offset_y + target_height]            # left-bottom
+        [0, 0],                           # left-top
+        [target_width, 0],                # right-top
+        [target_width, target_height],    # right-bottom
+        [0, target_height]                # left-bottom
     ], dtype=np.float32)
 
-    # Calculate perspective transformation matrix
     matrix = cv2.getPerspectiveTransform(src_points, dst_points)
 
-    # Apply perspective transformation with padding
-    rectified = cv2.warpPerspective(img, matrix, (padded_width, padded_height), 
-                                   borderMode=cv2.BORDER_CONSTANT, 
-                                   borderValue=(0, 0, 0))
+    # Calculate the bounding box that contains ALL original image pixels after transformation
+    # Transform all four corners of the original image
+    orig_corners = np.array([
+        [0, 0],                           # top-left
+        [orig_width, 0],                  # top-right
+        [orig_width, orig_height],        # bottom-right
+        [0, orig_height]                  # bottom-left
+    ], dtype=np.float32)
 
-    # Create alpha mask - areas with data get full opacity, black areas get transparency
-    gray = cv2.cvtColor(rectified, cv2.COLOR_BGR2GRAY)
-    alpha = np.where(gray > 0, 255, 0).astype(np.uint8)
-    
+    # Transform original image corners to see where they end up
+    transformed_corners = cv2.perspectiveTransform(
+        orig_corners.reshape(-1, 1, 2), matrix)
+    transformed_corners = transformed_corners.reshape(-1, 2)
+
+    # Find the bounding box of all transformed points
+    min_x = np.min(transformed_corners[:, 0])
+    max_x = np.max(transformed_corners[:, 0])
+    min_y = np.min(transformed_corners[:, 1])
+    max_y = np.max(transformed_corners[:, 1])
+
+    # Calculate output canvas size to contain everything
+    canvas_width = int(np.ceil(max_x - min_x))
+    canvas_height = int(np.ceil(max_y - min_y))
+
+    # Offset to shift everything into positive coordinates
+    offset_x = -min_x
+    offset_y = -min_y
+
+    print(
+        f"Transformed bounds: x[{min_x:.1f}, {max_x:.1f}], y[{min_y:.1f}, {max_y:.1f}]")
+    print(f"Canvas dimensions: {canvas_width}x{canvas_height}")
+    print(f"Offset: ({offset_x:.1f}, {offset_y:.1f})")
+
+    # Create translation matrix to shift everything into positive coordinates
+    translation_matrix = np.array([
+        [1, 0, offset_x],
+        [0, 1, offset_y],
+        [0, 0, 1]
+    ], dtype=np.float32)
+
+    # Combine perspective transformation with translation
+    final_matrix = translation_matrix @ matrix
+
+    # Apply the combined transformation
+    rectified = cv2.warpPerspective(img, final_matrix, (canvas_width, canvas_height),
+                                    borderMode=cv2.BORDER_CONSTANT,
+                                    borderValue=(0, 0, 0))
+
+    # Create alpha mask based on original image content
+    # First create a mask of the original image (all white)
+    mask = np.ones((orig_height, orig_width), dtype=np.uint8) * 255
+
+    # Transform the mask using the same transformation
+    mask_transformed = cv2.warpPerspective(mask, final_matrix, (canvas_width, canvas_height),
+                                           borderMode=cv2.BORDER_CONSTANT,
+                                           borderValue=0)
+
+    # Create alpha channel: areas with original image data get full opacity
+    alpha = mask_transformed
+
     # Convert BGR to BGRA (add alpha channel)
     rectified_rgba = cv2.cvtColor(rectified, cv2.COLOR_BGR2BGRA)
     rectified_rgba[:, :, 3] = alpha
@@ -207,33 +257,31 @@ def rectify_rectangle_with_outskirts(input_image_path, corners, output_image_pat
     print(f"Rectified image with transparency saved to: {output_image_path}")
 
 
-# panels = ["panel_16_11"]
-
-
 def build(ctx):
     """Build phase - process all discovered panels"""
     panel_configs = getattr(ctx.env, 'PANEL_CONFIGS', [])
-    
+
     if not panel_configs:
         print("No panel configurations found. Run 'waf configure' first.")
         return
-    
+
     for config in panel_configs:
         svg_file_name = config['svg_file']
         polygon_id = config['polygon_id']
         photo_path = config['photo_path']
         svg_path = config['svg_path']
-        
+
         print(f"Processing panel {polygon_id} from {svg_file_name}")
-        
+
         try:
             # Extract polygon coordinates from SVG
             corners = extract_polygon_points(svg_path, polygon_id)
-            
+
             if len(corners) != 4:
-                print(f"Error: Expected 4 corners for {polygon_id}, got {len(corners)}")
+                print(
+                    f"Error: Expected 4 corners for {polygon_id}, got {len(corners)}")
                 continue
-            
+
             # Find the source photo (handle relative paths from SVG)
             if photo_path.startswith('../'):
                 # Relative path from SVG location
@@ -244,18 +292,18 @@ def build(ctx):
             else:
                 # Try to find in build directory
                 source_photo = ctx.path.find_resource(photo_path)
-            
+
             if not source_photo:
                 print(f"Warning: Source photo not found: {photo_path}")
                 continue
-            
+
             # Create output file name based on polygon ID (now PNG)
             output_name = f"rectified_{polygon_id}.png"
             rectified_panel = ctx.path.find_or_declare(output_name)
-            
+
             # Get SVG file resource for dependency tracking
             svg_resource = ctx.path.find_resource(svg_file_name)
-            
+
             # Create WAF task
             ctx(rule=lambda task, corners=corners: rectify_rectangle_with_outskirts(
                 task.inputs[0].abspath(),
@@ -265,9 +313,10 @@ def build(ctx):
                 source=[source_photo, svg_resource],
                 target=rectified_panel,
                 name=f'rectify_{polygon_id}')
-                
-            print(f"Created task for {polygon_id}: {source_photo.name} -> {output_name}")
-            
+
+            print(
+                f"Created task for {polygon_id}: {source_photo.name} -> {output_name}")
+
         except Exception as e:
             print(f"Error processing {polygon_id}: {e}")
 
