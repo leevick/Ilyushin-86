@@ -3,3 +3,5 @@ build
 waf3-2.0.23*
 .lock-waf_*_build
 .waf3*
+.venv
+build
