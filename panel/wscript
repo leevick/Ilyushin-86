@@ -108,9 +108,10 @@ def extract_polygon_points(svg_file_path, polygon_id):
         raise ValueError(f"Error extracting polygon points: {e}")
 
 
-def rectify_rectangle(input_image_path, corners, output_image_path=None):
+def rectify_rectangle_with_outskirts(input_image_path, corners, output_image_path=None):
     """
     Rectify and crop an image to a rectangle using 4 corner coordinates.
+    Preserves outskirt areas with transparency and outputs as PNG.
 
     Args:
         input_image_path (str): Path to the input image
@@ -131,7 +132,7 @@ def rectify_rectangle(input_image_path, corners, output_image_path=None):
         base_name = os.path.basename(input_image_path)
         name, ext = os.path.splitext(base_name)
         dir_name = os.path.dirname(input_image_path)
-        output_image_path = os.path.join(dir_name, f"wrapped_{name}{ext}")
+        output_image_path = os.path.join(dir_name, f"wrapped_{name}.png")
 
     # Calculate the optimal aspect ratio for the rectangle
     def distance(p1, p2):
@@ -149,12 +150,8 @@ def rectify_rectangle(input_image_path, corners, output_image_path=None):
     avg_height = (left_height + right_height) / 2
 
     # Use the larger dimension as reference for better quality
-    if avg_width > avg_height:
-        target_width = int(avg_width)
-        target_height = int(avg_height)
-    else:
-        target_width = int(avg_width)
-        target_height = int(avg_height)
+    target_width = int(avg_width)
+    target_height = int(avg_height)
 
     # Ensure minimum size
     min_size = 100
@@ -163,31 +160,51 @@ def rectify_rectangle(input_image_path, corners, output_image_path=None):
         target_width = int(target_width * scale)
         target_height = int(target_height * scale)
 
+    # Add padding to preserve outskirts (25% padding on each side)
+    padding_factor = 0.25
+    padded_width = int(target_width * (1 + 2 * padding_factor))
+    padded_height = int(target_height * (1 + 2 * padding_factor))
+    
+    # Offset for centering the main rectangle
+    offset_x = int(target_width * padding_factor)
+    offset_y = int(target_height * padding_factor)
+
     print(f"Input image: {input_image_path}")
     print(f"Corners: {corners}")
     print(f"Target dimensions: {target_width}x{target_height}")
+    print(f"Padded dimensions: {padded_width}x{padded_height}")
 
-    # Define source and destination points
+    # Define source and destination points with padding
     src_points = np.array(corners, dtype=np.float32)
     dst_points = np.array([
-        [0, 0],                           # left-top
-        [target_width, 0],                # right-top
-        [target_width, target_height],    # right-bottom
-        [0, target_height]                # left-bottom
+        [offset_x, offset_y],                           # left-top
+        [offset_x + target_width, offset_y],            # right-top
+        [offset_x + target_width, offset_y + target_height],  # right-bottom
+        [offset_x, offset_y + target_height]            # left-bottom
     ], dtype=np.float32)
 
     # Calculate perspective transformation matrix
     matrix = cv2.getPerspectiveTransform(src_points, dst_points)
 
-    # Apply perspective transformation
-    rectified = cv2.warpPerspective(img, matrix, (target_width, target_height))
+    # Apply perspective transformation with padding
+    rectified = cv2.warpPerspective(img, matrix, (padded_width, padded_height), 
+                                   borderMode=cv2.BORDER_CONSTANT, 
+                                   borderValue=(0, 0, 0))
 
-    # Save the result
-    success = cv2.imwrite(output_image_path, rectified)
+    # Create alpha mask - areas with data get full opacity, black areas get transparency
+    gray = cv2.cvtColor(rectified, cv2.COLOR_BGR2GRAY)
+    alpha = np.where(gray > 0, 255, 0).astype(np.uint8)
+    
+    # Convert BGR to BGRA (add alpha channel)
+    rectified_rgba = cv2.cvtColor(rectified, cv2.COLOR_BGR2BGRA)
+    rectified_rgba[:, :, 3] = alpha
+
+    # Save as PNG with transparency
+    success = cv2.imwrite(output_image_path, rectified_rgba)
     if not success:
         raise RuntimeError(f"Failed to save image to: {output_image_path}")
 
-    print(f"Rectified image saved to: {output_image_path}")
+    print(f"Rectified image with transparency saved to: {output_image_path}")
 
 
 # panels = ["panel_16_11"]
@@ -232,15 +249,15 @@ def build(ctx):
                 print(f"Warning: Source photo not found: {photo_path}")
                 continue
             
-            # Create output file name based on polygon ID
-            output_name = f"rectified_{polygon_id}.JPG"
+            # Create output file name based on polygon ID (now PNG)
+            output_name = f"rectified_{polygon_id}.png"
             rectified_panel = ctx.path.find_or_declare(output_name)
             
             # Get SVG file resource for dependency tracking
             svg_resource = ctx.path.find_resource(svg_file_name)
             
             # Create WAF task
-            ctx(rule=lambda task, corners=corners: rectify_rectangle(
+            ctx(rule=lambda task, corners=corners: rectify_rectangle_with_outskirts(
                 task.inputs[0].abspath(),
                 corners,
                 task.outputs[0].abspath()
